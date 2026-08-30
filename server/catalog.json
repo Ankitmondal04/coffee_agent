@@ -1,0 +1,9 @@
+{
+  "cappuccino": {"name": "Cappuccino", "price": 180, "stock": 20},
+  "latte": {"name": "Latte", "price": 190, "stock": 20},
+  "espresso": {"name": "Espresso", "price": 120, "stock": 20},
+  "cold_brew": {"name": "Cold Brew", "price": 220, "stock": 15},
+  "croissant": {"name": "Croissant", "price": 120, "stock": 0},
+  "muffin": {"name": "Blueberry Muffin", "price": 150, "stock": 10},
+  "sandwich": {"name": "Club Sandwich", "price": 250, "stock": 8}
+}

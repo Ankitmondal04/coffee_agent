@@ -1,0 +1,6 @@
+{
+  "auto_approve_limit": 500,
+  "max_items_per_order": 10,
+  "currency": "INR",
+  "notes": "Orders at or under auto_approve_limit proceed to payment automatically. Orders above it require explicit user confirmation before payment is attempted."
+}

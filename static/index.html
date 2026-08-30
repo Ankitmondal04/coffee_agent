@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Coffee Shop Checkout Agent</title>
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<style>
+  * { box-sizing: border-box; font-family: -apple-system, Segoe UI, Roboto, sans-serif; }
+  body { margin: 0; background: #f4f1ee; display: flex; height: 100vh; }
+  .panel { padding: 20px; overflow-y: auto; }
+  .chat-panel { width: 55%; display: flex; flex-direction: column; border-right: 1px solid #ddd; }
+  .audit-panel { width: 45%; background: #1e1e1e; color: #d4d4d4; font-family: monospace; font-size: 13px; }
+  .audit-panel h2 { color: #fff; font-family: -apple-system, sans-serif; }
+  .messages { flex: 1; overflow-y: auto; margin-bottom: 12px; }
+  .msg { padding: 10px 14px; border-radius: 12px; margin: 6px 0; max-width: 80%; }
+  .msg.user { background: #6b4226; color: white; margin-left: auto; }
+  .msg.agent { background: white; border: 1px solid #ddd; }
+  .input-row { display: flex; gap: 8px; }
+  input[type=text] { flex: 1; padding: 10px; border-radius: 8px; border: 1px solid #ccc; }
+  button { padding: 10px 16px; border-radius: 8px; border: none; background: #6b4226; color: white; cursor: pointer; }
+  .audit-entry { border-left: 3px solid #6b4226; padding: 6px 10px; margin-bottom: 8px; background: #2a2a2a; }
+  .audit-step { color: #d4a373; font-weight: bold; }
+  pre { white-space: pre-wrap; word-break: break-word; margin: 4px 0 0; }
+  .status-tag { display:inline-block; font-size:11px; padding:2px 6px; border-radius:6px; margin-left:6px; }
+</style>
+</head>
+<body>
+
+<div class="panel chat-panel">
+  <h2>☕ Coffee Shop Agent</h2>
+  <p style="color:#666; font-size:14px;">
+    Try: "2 cappuccinos and a muffin" (auto-approved) &middot;
+    "5 cold brews and 3 sandwiches" (tests the confirmation gate) &middot;
+    "a croissant" (tests out-of-stock handling, stock is 0).
+  </p>
+  <div class="messages" id="messages"></div>
+  <div class="input-row">
+    <input type="text" id="input" placeholder="Order something..." onkeydown="if(event.key==='Enter') send()" />
+    <button onclick="send()">Send</button>
+  </div>
+</div>
+
+<div class="panel audit-panel">
+  <h2>🔍 Live Audit Trail</h2>
+  <div id="audit"></div>
+</div>
+
+<script>
+const API = "http://localhost:8000";
+let sessionId = null;
+
+function addMessage(text, who) {
+  const div = document.createElement("div");
+  div.className = "msg " + who;
+  div.textContent = text;
+  document.getElementById("messages").appendChild(div);
+  div.scrollIntoView();
+}
+
+async function refreshAudit() {
+  if (!sessionId) return;
+  const res = await fetch(`${API}/audit/${sessionId}`);
+  const entries = await res.json();
+  const container = document.getElementById("audit");
+  container.innerHTML = "";
+  entries.forEach(e => {
+    const div = document.createElement("div");
+    div.className = "audit-entry";
+    div.innerHTML = `<div class="audit-step">${e.step}</div><pre>${JSON.stringify(e.detail, null, 2)}</pre>`;
+    container.appendChild(div);
+  });
+}
+
+async function send() {
+  const input = document.getElementById("input");
+  const message = input.value.trim();
+  if (!message) return;
+  addMessage(message, "user");
+  input.value = "";
+
+  // if a gated order is pending, typing "confirm" hits /confirm instead of /chat
+  const isConfirming = message.toLowerCase() === "confirm" && sessionId;
+  const endpoint = isConfirming ? "/confirm" : "/chat";
+  const body = isConfirming
+    ? { session_id: sessionId, confirm: true }
+    : { session_id: sessionId, message };
+
+  try {
+    const res = await fetch(API + endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+
+    if (!res.ok) {
+      addMessage(data.detail || "Something went wrong.", "agent");
+      return;
+    }
+
+    sessionId = data.session_id || sessionId;
+    addMessage(data.reply, "agent");
+    await refreshAudit();
+
+    if (data.status === "auto_approved" && data.razorpay_order_id) {
+      openRazorpayCheckout(data);
+    }
+  } catch (err) {
+    addMessage("Couldn't reach the server. Is uvicorn running on port 8000?", "agent");
+  }
+}
+
+function openRazorpayCheckout(data) {
+  const options = {
+    key: data.razorpay_key_id,
+    amount: data.amount_paise,
+    currency: "INR",
+    name: "Coffee Shop Agent",
+    description: "Order payment (TEST MODE)",
+    order_id: data.razorpay_order_id,
+    handler: async function (response) {
+      const res = await fetch(API + "/payment-callback", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          session_id: sessionId,
+          razorpay_order_id: response.razorpay_order_id,
+          razorpay_payment_id: response.razorpay_payment_id,
+          razorpay_signature: response.razorpay_signature,
+          status: "success",
+        }),
+      });
+      const result = await res.json();
+      addMessage(result.reply, "agent");
+      await refreshAudit();
+    },
+    modal: {
+      // fires when the user closes the popup without paying -> graceful failure path
+      ondismiss: async function () {
+        const res = await fetch(API + "/payment-callback", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ session_id: sessionId, razorpay_order_id: data.razorpay_order_id, status: "failed" }),
+        });
+        const result = await res.json();
+        addMessage(result.reply, "agent");
+        await refreshAudit();
+      },
+    },
+    theme: { color: "#6b4226" },
+  };
+  const rzp = new Razorpay(options);
+  rzp.open();
+}
+</script>
+</body>
+</html>

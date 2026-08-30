@@ -1,0 +1,16 @@
+# secrets
+server/.env
+
+# virtual environment
+myenv/
+
+# python cache
+__pycache__/
+*.pyc
+
+# audit log (local runtime data, not source code)
+server/audit_log.json
+
+# editor/OS junk
+.vscode/
+.DS_Store
